@@ -1,0 +1,72 @@
+-- Q1.hs — Hospital Patient Records Analysis
+-- Input lines like: Name:Age:ReasonCode   e.g., "Alice:34:2"
+-- Requirements: pattern matching + recursion; no external libs.
+
+module Main where
+
+import System.IO (hReady, stdin)
+import System.Environment (getArgs)
+
+-- Split a string on a single character (recursive, minimal)
+split :: Char -> String -> [String]
+split _ [] = [""]
+split c (x:xs)
+  | x == c    = "" : rest
+  | otherwise = (x : head rest) : tail rest
+  where
+    rest = split c xs
+
+type Rec = (String, Int, Int) -- (Name, Age, ReasonCode)
+
+parseRec :: String -> Rec
+parseRec s =
+  case split ':' s of
+    [nm,a,r] -> (nm, read a, read r)
+    _        -> error "Bad line. Use Name:Age:Reason"
+
+-- Count reasons (1,2,3) recursively
+countReasons :: [Rec] -> (Int, Int, Int)
+countReasons [] = (0,0,0)
+countReasons ((,,rc):xs)
+  | rc == 1   = let (a,b,c) = countReasons xs in (a+1,b,c)
+  | rc == 2   = let (a,b,c) = countReasons xs in (a,b+1,c)
+  | rc == 3   = let (a,b,c) = countReasons xs in (a,b,c+1)
+  | otherwise = countReasons xs
+
+-- Count adults (age >= 18) recursively
+countAdults :: [Rec] -> Int
+countAdults [] = 0
+countAdults ((,age,):xs)
+  | age >= 18 = 1 + countAdults xs
+  | otherwise = countAdults xs
+
+-- Fallback sample data (used when no input/args are provided)
+sample :: [Rec]
+sample =
+  [ ("Alice",34,2), ("Bob",16,1), ("Cara",45,3)
+  , ("Dan",18,1), ("Eve",25,2), ("Finn",12,1)
+  ]
+
+-- Non-blocking line reader: if no stdin ready, return []
+getLinesNB :: IO [String]
+getLinesNB = do
+  ready <- hReady stdin
+  if not ready then return [] else do
+    ln <- getLine
+    if null ln then return [] else do
+      rest <- getLinesNB
+      return (ln:rest)
+
+main :: IO ()
+main = do
+  -- Prefer stdin if available; else fall back to command-line args; else to sample
+  lsStdin <- getLinesNB
+  args <- getArgs
+  let ls   = if not (null lsStdin) then lsStdin else args
+      recs = if null ls then sample else map parseRec ls
+      (c1,c2,c3) = countReasons recs
+      adults     = countAdults recs
+  putStrLn ("General Checkup (1): " ++ show c1)
+  putStrLn ("Emergency (2): "       ++ show c2)
+  putStrLn ("Surgery (3): "         ++ show c3)
+  putStrLn ("Total adults (>=18): " ++ show adults)
