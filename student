@@ -5,8 +5,9 @@
 
 module Main where
 
-import System.IO (stdin, hWaitForInput, isEOF)
+import System.IO (stdin, hWaitForInput, hIsTerminalDevice, isEOF)
 
+-- Simple string split (recursive)
 split :: Char -> String -> [String]
 split _ [] = [""]
 split c (x:xs)
@@ -42,35 +43,51 @@ countPass ((_,m):xs)
   | m >= 40   = 1 + countPass xs
   | otherwise = countPass xs
 
--- Non-blocking: if no stdin available immediately, return []
+-- Interactive: read lines until empty line
+getLinesInteractive :: IO [String]
+getLinesInteractive = do
+  ln <- getLine
+  if null ln
+    then return []
+    else do rest <- getLinesInteractive
+            return (ln : rest)
+
+-- Non-interactive: slurp all lines until EOF (used when piped input exists)
+getLinesNonInteractive :: IO [String]
+getLinesNonInteractive = do
+  eof <- isEOF
+  if eof
+    then return []
+    else do ln <- getLine
+            rest <- getLinesNonInteractive
+            return (ln : rest)
+
+-- Smart reader:
+-- - If running in a real terminal: interactive (blank line to finish)
+-- - If not a terminal:
+--     * If no data is immediately available: return [] (exit cleanly)
+--     * If data is available: read all until EOF
 getLines :: IO [String]
 getLines = do
-  avail <- hWaitForInput stdin 0   -- poll stdin (0 ms). If false, no input provided.
-  if not avail then return [] else loop
-  where
-    loop = do
-      eof <- isEOF
-      if eof
-        then return []
-        else do
-          ln <- getLine
-          if null ln
-            then return []
-            else do
-              rest <- loop
-              return (ln : rest)
-
-sample :: [SM]
-sample =
-  [ ("Riya",77), ("Kiran",38), ("Asha",59), ("Dev",81), ("Om",64) ]
+  isTTY <- hIsTerminalDevice stdin
+  if isTTY
+     then getLinesInteractive
+     else do
+       avail <- hWaitForInput stdin 0   -- poll without blocking
+       if not avail
+          then return []                -- no stdin provided (avoid timeout)
+          else getLinesNonInteractive
 
 main :: IO ()
 main = do
   putStrLn "Enter student marks (Name:Mark). Empty line to finish:"
   ls <- getLines
-  let xs = if null ls then sample else map parseSM ls
-      ys = annotate xs
-      pc = countPass xs
-  putStrLn "=== Performance ==="
-  mapM_ (\(n,m,c) -> putStrLn (n ++ " " ++ show m ++ " -> " ++ c)) ys
-  putStrLn ("Pass count (>=40): " ++ show pc)
+  if null ls
+    then putStrLn "No input detected. Exiting without processing."
+    else do
+      let xs = map parseSM ls
+          ys = annotate xs
+          pc = countPass xs
+      putStrLn "=== Performance ==="
+      mapM_ (\(n,m,c) -> putStrLn (n ++ " " ++ show m ++ " -> " ++ c)) ys
+      putStrLn ("Pass count (>=40): " ++ show pc)
