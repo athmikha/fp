@@ -1,25 +1,51 @@
--- Q2.hs — Cinema Ticket Sales Report (non-blocking stdin)
--- Usage:
---   (A) Just run: uses sample data instantly.
---   (B) Pipe lines:  echo -e "Adult:3\nChild:2\n" | ./Main
+-- Q2.hs — Cinema Ticket Sales Report (interactive / non-blocking safe)
+-- Enter lines like: "Adult:3", "Child:2", "Senior:1"
+-- Blank line ends input when run interactively. Piped input reads to EOF.
 
 module Main where
-import System.IO (hReady, stdin)
+import System.IO (stdin, hIsTerminalDevice, hWaitForInput, isEOF)
 
 type Sale = (String, Int)
 
+-- Split on a single character (recursive)
 split :: Char -> String -> [String]
 split _ [] = [""]
 split c (x:xs)
   | x == c    = "" : rest
   | otherwise = (x : head rest) : tail rest
-  where rest = split c xs
+  where
+    rest = split c xs
 
-parseSale :: String -> Sale
-parseSale s = case split ':' s of
-  [cat,q] -> (cat, read q)
-  _       -> error "Use Category:Quantity (e.g., Adult:3)"
+-- Safe int read (no crash)
+readIntMaybe :: String -> Maybe Int
+readIntMaybe s = case reads s of
+  [(n,"")] -> Just n
+  _        -> Nothing
 
+-- Normalize category to exactly "Adult"|"Child"|"Senior" or Nothing
+normCat :: String -> Maybe String
+normCat s = case s of
+  "Adult"  -> Just "Adult"
+  "adult"  -> Just "Adult"
+  "ADULT"  -> Just "Adult"
+  "Child"  -> Just "Child"
+  "child"  -> Just "Child"
+  "CHILD"  -> Just "Child"
+  "Senior" -> Just "Senior"
+  "senior" -> Just "Senior"
+  "SENIOR" -> Just "Senior"
+  _        -> Nothing
+
+parseSaleMaybe :: String -> Maybe Sale
+parseSaleMaybe s =
+  case split ':' s of
+    [cat,q] ->
+      case (normCat cat, readIntMaybe q) of
+        (Just c, Just n) -> Just (c, n)
+        _                -> Nothing
+    _ -> Nothing
+
+-- Sum quantities per category (recursive)
 sumCats :: [Sale] -> (Int,Int,Int) -- (Adult, Child, Senior)
 sumCats [] = (0,0,0)
 sumCats ((cat,q):xs) =
@@ -27,7 +53,7 @@ sumCats ((cat,q):xs) =
     "Adult"  -> let (a,c,s) = sumCats xs in (a+q,c,s)
     "Child"  -> let (a,c,s) = sumCats xs in (a,c+q,s)
     "Senior" -> let (a,c,s) = sumCats xs in (a,c,s+q)
-    _        -> sumCats xs
+    _        -> sumCats xs  -- shouldn't happen after norming
 
 price :: String -> Int
 price "Adult"  = 12
@@ -35,23 +61,71 @@ price "Child"  = 8
 price "Senior" = 10
 price _        = 0
 
+-- Total revenue (recursive)
 revenue :: [Sale] -> Int
 revenue [] = 0
 revenue ((cat,q):xs) = q * price cat + revenue xs
 
-sample :: [Sale]
-sample = [("Adult",3),("Child",2),("Senior",4),("Adult",1),("Child",1)]
+-- Collect only Just values (recursive)
+collectJusts :: [Maybe a] -> [a]
+collectJusts [] = []
+collectJusts (m:ms) =
+  case m of
+    Just v  -> v : collectJusts ms
+    Nothing -> collectJusts ms
+
+-- Count Nothings (recursive)
+countNothings :: [Maybe a] -> Int
+countNothings [] = 0
+countNothings (m:ms) =
+  (case m of { Nothing -> 1; _ -> 0 }) + countNothings ms
+
+-- Interactive: read lines until empty line
+getLinesInteractive :: IO [String]
+getLinesInteractive = do
+  ln <- getLine
+  if null ln
+    then return []
+    else do rest <- getLinesInteractive
+            return (ln : rest)
+
+-- Non-interactive: read all lines until EOF (for piped input)
+getLinesNonInteractive :: IO [String]
+getLinesNonInteractive = do
+  eof <- isEOF
+  if eof
+    then return []
+    else do ln <- getLine
+            rest <- getLinesNonInteractive
+            return (ln : rest)
+
+-- Smart reader to avoid blocking in sandboxes
+getLines :: IO [String]
+getLines = do
+  isTTY <- hIsTerminalDevice stdin
+  if isTTY
+     then getLinesInteractive
+     else do
+       avail <- hWaitForInput stdin 0  -- poll without blocking
+       if not avail then return [] else getLinesNonInteractive
 
 main :: IO ()
 main = do
-  hasInput <- hReady stdin          -- non-blocking check
-  contents <- if hasInput then getContents else pure ""
-  let ls    = filter (not . null) (lines contents)
-      sales = if null ls then sample else map parseSale ls
-      (ad,ch,se) = sumCats sales
-      rev        = revenue sales
-  putStrLn "=== Sales Report ==="
-  putStrLn ("Adult tickets : "  ++ show ad)
-  putStrLn ("Child tickets : "  ++ show ch)
-  putStrLn ("Senior tickets: "  ++ show se)
-  putStrLn ("Total revenue : $" ++ show rev)
+  putStrLn "Enter sales lines (Adult|Child|Senior:Qty). Empty line to finish:"
+  ls <- getLines
+  if null ls
+    then putStrLn "No input detected. Exiting without processing."
+    else do
+      let parsed    = map parseSaleMaybe ls
+          invalid   = countNothings parsed
+          sales     = collectJusts parsed
+          (ad,ch,se)= sumCats sales
+          rev       = revenue sales
+      putStrLn "=== Sales Report ==="
+      putStrLn ("Adult tickets : "  ++ show ad)
+      putStrLn ("Child tickets : "  ++ show ch)
+      putStrLn ("Senior tickets: "  ++ show se)
+      putStrLn ("Total revenue : $" ++ show rev)
+      if invalid > 0
+        then putStrLn ("(Skipped invalid lines: " ++ show invalid ++ ")")
+        else return ()
