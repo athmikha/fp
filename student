@@ -1,0 +1,76 @@
+-- Q3.hs — Student Academic Performance Report
+-- Input lines like: Name:Mark   e.g., "Riya:77"
+-- Classes: Fail<40, Pass 40–59, Merit 60–79, Distinction 80+
+-- Requirements: pattern matching + guards + recursion; no external libs.
+
+module Main where
+
+import System.IO (stdin, hWaitForInput, isEOF)
+
+split :: Char -> String -> [String]
+split _ [] = [""]
+split c (x:xs)
+  | x == c    = "" : rest
+  | otherwise = (x : head rest) : tail rest
+  where
+    rest = split c xs
+
+type SM = (String, Int)
+
+parseSM :: String -> SM
+parseSM s =
+  case split ':' s of
+    [nm,m] -> (nm, read m)
+    _      -> error "Bad line. Use Name:Mark"
+
+category :: Int -> String
+category m
+  | m < 40    = "Fail"
+  | m < 60    = "Pass"
+  | m < 80    = "Merit"
+  | otherwise = "Distinction"
+
+-- Produce (Name,Mark,Category) recursively
+annotate :: [SM] -> [(String, Int, String)]
+annotate [] = []
+annotate ((nm,m):xs) = (nm, m, category m) : annotate xs
+
+-- Count passes (>=40) recursively
+countPass :: [SM] -> Int
+countPass [] = 0
+countPass ((_,m):xs)
+  | m >= 40   = 1 + countPass xs
+  | otherwise = countPass xs
+
+-- Non-blocking: if no stdin available immediately, return []
+getLines :: IO [String]
+getLines = do
+  avail <- hWaitForInput stdin 0   -- poll stdin (0 ms). If false, no input provided.
+  if not avail then return [] else loop
+  where
+    loop = do
+      eof <- isEOF
+      if eof
+        then return []
+        else do
+          ln <- getLine
+          if null ln
+            then return []
+            else do
+              rest <- loop
+              return (ln : rest)
+
+sample :: [SM]
+sample =
+  [ ("Riya",77), ("Kiran",38), ("Asha",59), ("Dev",81), ("Om",64) ]
+
+main :: IO ()
+main = do
+  putStrLn "Enter student marks (Name:Mark). Empty line to finish:"
+  ls <- getLines
+  let xs = if null ls then sample else map parseSM ls
+      ys = annotate xs
+      pc = countPass xs
+  putStrLn "=== Performance ==="
+  mapM_ (\(n,m,c) -> putStrLn (n ++ " " ++ show m ++ " -> " ++ c)) ys
+  putStrLn ("Pass count (>=40): " ++ show pc)
