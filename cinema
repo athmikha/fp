@@ -1,0 +1,57 @@
+-- Q2.hs — Cinema Ticket Sales Report (non-blocking stdin)
+-- Usage:
+--   (A) Just run: uses sample data instantly.
+--   (B) Pipe lines:  echo -e "Adult:3\nChild:2\n" | ./Main
+
+module Main where
+import System.IO (hReady, stdin)
+
+type Sale = (String, Int)
+
+split :: Char -> String -> [String]
+split _ [] = [""]
+split c (x:xs)
+  | x == c    = "" : rest
+  | otherwise = (x : head rest) : tail rest
+  where rest = split c xs
+
+parseSale :: String -> Sale
+parseSale s = case split ':' s of
+  [cat,q] -> (cat, read q)
+  _       -> error "Use Category:Quantity (e.g., Adult:3)"
+
+sumCats :: [Sale] -> (Int,Int,Int) -- (Adult, Child, Senior)
+sumCats [] = (0,0,0)
+sumCats ((cat,q):xs) =
+  case cat of
+    "Adult"  -> let (a,c,s) = sumCats xs in (a+q,c,s)
+    "Child"  -> let (a,c,s) = sumCats xs in (a,c+q,s)
+    "Senior" -> let (a,c,s) = sumCats xs in (a,c,s+q)
+    _        -> sumCats xs
+
+price :: String -> Int
+price "Adult"  = 12
+price "Child"  = 8
+price "Senior" = 10
+price _        = 0
+
+revenue :: [Sale] -> Int
+revenue [] = 0
+revenue ((cat,q):xs) = q * price cat + revenue xs
+
+sample :: [Sale]
+sample = [("Adult",3),("Child",2),("Senior",4),("Adult",1),("Child",1)]
+
+main :: IO ()
+main = do
+  hasInput <- hReady stdin          -- non-blocking check
+  contents <- if hasInput then getContents else pure ""
+  let ls    = filter (not . null) (lines contents)
+      sales = if null ls then sample else map parseSale ls
+      (ad,ch,se) = sumCats sales
+      rev        = revenue sales
+  putStrLn "=== Sales Report ==="
+  putStrLn ("Adult tickets : "  ++ show ad)
+  putStrLn ("Child tickets : "  ++ show ch)
+  putStrLn ("Senior tickets: "  ++ show se)
+  putStrLn ("Total revenue : $" ++ show rev)
