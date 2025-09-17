@@ -4,10 +4,9 @@
 
 module Main where
 
-import System.IO (hReady, stdin)
-import System.Environment (getArgs)
+import System.IO (stdin, hIsTerminalDevice, hWaitForInput, isEOF)
 
--- Split a string on a single character (recursive, minimal)
+-- Split a string on a single character (recursive)
 split :: Char -> String -> [String]
 split _ [] = [""]
 split c (x:xs)
@@ -27,7 +26,7 @@ parseRec s =
 -- Count reasons (1,2,3) recursively
 countReasons :: [Rec] -> (Int, Int, Int)
 countReasons [] = (0,0,0)
-countReasons ((,,rc):xs)
+countReasons ((_,_,rc):xs)
   | rc == 1   = let (a,b,c) = countReasons xs in (a+1,b,c)
   | rc == 2   = let (a,b,c) = countReasons xs in (a,b+1,c)
   | rc == 3   = let (a,b,c) = countReasons xs in (a,b,c+1)
@@ -36,37 +35,54 @@ countReasons ((,,rc):xs)
 -- Count adults (age >= 18) recursively
 countAdults :: [Rec] -> Int
 countAdults [] = 0
-countAdults ((,age,):xs)
+countAdults ((_,age,_):xs)
   | age >= 18 = 1 + countAdults xs
   | otherwise = countAdults xs
 
--- Fallback sample data (used when no input/args are provided)
-sample :: [Rec]
-sample =
-  [ ("Alice",34,2), ("Bob",16,1), ("Cara",45,3)
-  , ("Dan",18,1), ("Eve",25,2), ("Finn",12,1)
-  ]
+-- Interactive: read lines until empty line
+getLinesInteractive :: IO [String]
+getLinesInteractive = do
+  ln <- getLine
+  if null ln
+    then return []
+    else do rest <- getLinesInteractive
+            return (ln : rest)
 
--- Non-blocking line reader: if no stdin ready, return []
-getLinesNB :: IO [String]
-getLinesNB = do
-  ready <- hReady stdin
-  if not ready then return [] else do
-    ln <- getLine
-    if null ln then return [] else do
-      rest <- getLinesNB
-      return (ln:rest)
+-- Non-interactive: read all until EOF (for piped input)
+getLinesNonInteractive :: IO [String]
+getLinesNonInteractive = do
+  eof <- isEOF
+  if eof
+    then return []
+    else do ln <- getLine
+            rest <- getLinesNonInteractive
+            return (ln : rest)
+
+-- Smart reader:
+--  * If TTY: interactive (blank line to finish)
+--  * If not TTY:
+--      - if no data immediately: return [] (avoid blocking/timeout)
+--      - else read all until EOF
+getLines :: IO [String]
+getLines = do
+  isTTY <- hIsTerminalDevice stdin
+  if isTTY
+     then getLinesInteractive
+     else do
+       avail <- hWaitForInput stdin 0
+       if not avail then return [] else getLinesNonInteractive
 
 main :: IO ()
 main = do
-  -- Prefer stdin if available; else fall back to command-line args; else to sample
-  lsStdin <- getLinesNB
-  args <- getArgs
-  let ls   = if not (null lsStdin) then lsStdin else args
-      recs = if null ls then sample else map parseRec ls
-      (c1,c2,c3) = countReasons recs
-      adults     = countAdults recs
-  putStrLn ("General Checkup (1): " ++ show c1)
-  putStrLn ("Emergency (2): "       ++ show c2)
-  putStrLn ("Surgery (3): "         ++ show c3)
-  putStrLn ("Total adults (>=18): " ++ show adults)
+  putStrLn "Enter patient records (Name:Age:ReasonCode). Empty line to finish:"
+  ls <- getLines
+  if null ls
+    then putStrLn "No input detected. Exiting without processing."
+    else do
+      let recs        = map parseRec ls
+          (c1,c2,c3)  = countReasons recs
+          adults      = countAdults recs
+      putStrLn ("General Checkup (1): " ++ show c1)
+      putStrLn ("Emergency (2): "       ++ show c2)
+      putStrLn ("Surgery (3): "         ++ show c3)
+      putStrLn ("Total adults (>=18): " ++ show adults)
